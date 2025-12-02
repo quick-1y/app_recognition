@@ -1,0 +1,3 @@
+plate_image_send_interval: 20
+video_paths:
+- rtsp://admin:admin@78.138.142.26:2000/0

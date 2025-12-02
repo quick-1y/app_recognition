@@ -1,0 +1,11 @@
+# plates_config.yaml
+
+# Путь к датасету
+path: D:\dataset
+train: train/images
+val: valid/images
+test: test/images
+
+# Классы
+nc: 7  # Общее количество классов (6 транспортных средств + 1 номерной знак)
+names: ['bus', 'car', 'motorcycle', 'threewheel', 'truck', 'van', 'plate']

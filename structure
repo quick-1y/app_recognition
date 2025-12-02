@@ -1,0 +1,15 @@
+neural_network_plate_num/
+    ├── models/
+    │   └── best.pt
+    ├── configs/
+    │   ├── vehicles_type_config.yaml
+    │   └── plate_type.yaml
+    ├── scripts/
+    │   ├── plate_train.py
+    │   └── vehicles_type_train.py
+    ├── utils/
+    │   ├── checker.py
+    │   └── convert_annotation.py
+    ├── run.py
+    ├── gui.py
+    ├── process_video_realtime.py
