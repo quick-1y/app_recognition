@@ -1,203 +1,225 @@
-"""/gui/gui.py"""
-from gui.common import *
-from gui.gui_settings import SettingsDialog
+"""PyQt GUI for the licence plate recognition system."""
+from __future__ import annotations
+
+import sys
+
+from app.config import load_config, save_config
+from app.database import PlateDatabase
+from gui.common import (
+    QApplication,
+    QDesktopWidget,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QLineEdit,
+    QMainWindow,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+    QThread,
+    pyqtSignal,
+    QPixmap,
+    QImage,
+)
 from process_video_realtime import process_video_realtime
+
 
 class VideoThread(QThread):
     frame_signal = pyqtSignal(QImage)
     text_signal = pyqtSignal(str)
 
-    def __init__(self, video_path):
+    def __init__(self, video_path, settings, database):
         super().__init__()
         self.video_path = video_path
+        self.settings = settings
+        self.database = database
 
     def run(self):
-        try:
-            process_video_realtime(self.video_path, self.frame_signal.emit, self.text_signal.emit)
-        except Exception as e:
-            print(f"Error during video processing: {e}")
+        process_video_realtime(
+            self.video_path,
+            frame_callback=self.frame_signal.emit,
+            text_callback=self.text_signal.emit,
+            settings=self.settings,
+            database=self.database,
+        )
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.recognized_plates = set()  # Множество для хранения распознанных номеров
-        self.video_threads = []  # Инициализация списка потоков
-        self.load_config()  # Загрузка конфигурации перед инициализацией UI
+        self.settings = load_config()
+        self.database = PlateDatabase(self.settings.database)
+        self.recognized_plates = set()
+        self.video_threads = []
+
         self.initUI()
+        self.load_existing_records()
         self.start_processing()
 
-    def load_config(self):
-        with open('config.yaml', 'r') as file:
-            self.config = yaml.safe_load(file)
-
-    def save_config(self):
-        with open('config.yaml', 'w') as file:
-            yaml.dump(self.config, file)
-
-    def update_text(self, text):
-        if text and text not in self.recognized_plates:
-            item = QListWidgetItem(text)
-            self.events_list.addItem(item)
-            self.recognized_plates.add(text)  # Добавляем номер в множество
-
     def initUI(self):
-        self.setWindowTitle('Программа для распознования автомобильных номеров')
-
-        # Получение размеров экрана
+        self.setWindowTitle("Распознавание автомобильных номеров")
         screen = QDesktopWidget().screenGeometry()
-        screen_width = screen.width()
-        screen_height = screen.height()
+        window_width = int(screen.width() * 0.8)
+        window_height = int(screen.height() * 0.8)
+        self.setGeometry(
+            (screen.width() - window_width) // 2,
+            (screen.height() - window_height) // 2,
+            window_width,
+            window_height,
+        )
 
-        # Уменьшение размеров окна на 20%
-        window_width = int(screen_width * 0.8)
-        window_height = int(screen_height * 0.8)
-
-        # Расположение окна по центру экрана
-        self.setGeometry((screen_width - window_width) // 2, (screen_height - window_height) // 2, window_width, window_height)
-
-        # Основной виджет
         main_widget = QWidget(self)
         self.setCentralWidget(main_widget)
-
-        # Вертикальный layout для основного виджета
         main_layout = QVBoxLayout(main_widget)
-
-        # Горизонтальный layout для виджетов видео и списка номеров
         video_and_list_layout = QHBoxLayout()
         main_layout.addLayout(video_and_list_layout)
 
-        # Виджет для отображения видео
         self.video_label = QLabel(self)
-        video_width = int(window_width * 0.7)  # Ширина видео (70% от ширины окна)
-        video_height = int(window_height * 0.7)  # Высота видео (70% от высоты окна)
-        self.video_label.setFixedSize(video_width, video_height)  # Установка фиксированного размера для видео
-        self.video_label.setScaledContents(True)  # Масштабирование содержимого
+        video_width = int(window_width * 0.7)
+        video_height = int(window_height * 0.7)
+        self.video_label.setFixedSize(video_width, video_height)
+        self.video_label.setScaledContents(True)
         video_and_list_layout.addWidget(self.video_label)
 
-        # Виджет для отображения списка распознанных номеров с вкладками
         self.tab_widget = QTabWidget(self)
-        list_width = int(window_width * 0.3)  # Ширина списка (30% от ширины окна)
-        list_height = int(window_height * 0.7)  # Высота списка (70% от высоты окна)
-        self.tab_widget.setFixedSize(list_width, list_height)  # Установка фиксированного размера для списка
+        list_width = int(window_width * 0.3)
+        list_height = int(window_height * 0.7)
+        self.tab_widget.setFixedSize(list_width, list_height)
         video_and_list_layout.addWidget(self.tab_widget)
 
-        # Вкладка "События"
         self.events_list = QListWidget(self)
         self.tab_widget.addTab(self.events_list, "События")
 
-        # Вкладка "Поиск"
         self.search_list = QListWidget(self)
         self.tab_widget.addTab(self.search_list, "Поиск")
 
-        # Вкладка "Списки"
         self.lists_list = QListWidget(self)
         self.tab_widget.addTab(self.lists_list, "Списки")
 
-        # Вкладка "Настройки"
         self.settings_tab = QWidget()
         self.init_settings_tab()
         self.tab_widget.addTab(self.settings_tab, "Настройки")
 
-        # Инициализация потока обработки видео
-        self.video_thread = None
+    def init_settings_tab(self):
+        layout = QVBoxLayout(self.settings_tab)
+        self.processing_settings_tab = QWidget()
+        processing_layout = QFormLayout(self.processing_settings_tab)
+
+        self.interval_edit = QLineEdit(self)
+        self.interval_edit.setText(str(self.settings.processing.plate_image_send_interval))
+        processing_layout.addRow("Отправка изображения каждые (кадров):", self.interval_edit)
+
+        self.gpu_toggle = QLineEdit(self)
+        self.gpu_toggle.setText(str(self.settings.ocr.gpu))
+        processing_layout.addRow("OCR GPU (True/False):", self.gpu_toggle)
+
+        layout.addWidget(self.processing_settings_tab)
+
+        self.channels_settings_tab = QWidget()
+        channels_layout = QFormLayout(self.channels_settings_tab)
+
+        self.channel_count_edit = QLineEdit(self)
+        self.channel_count_edit.setText(str(len(self.settings.app.video_paths)))
+        channels_layout.addRow("Количество каналов (не больше 10):", self.channel_count_edit)
+
+        self.video_path_edits = []
+        for i in range(10):
+            edit = QLineEdit(self)
+            edit.setReadOnly(True)
+            edit.mousePressEvent = lambda event, idx=i: self.select_video(event, idx)
+            self.video_path_edits.append(edit)
+            channels_layout.addRow(f"Путь к видео для канала {i + 1}:", edit)
+
+        for i, path in enumerate(self.settings.app.video_paths):
+            self.video_path_edits[i].setText(path)
+
+        layout.addWidget(self.channels_settings_tab)
+
+        save_button = QPushButton("Сохранить настройки", self)
+        save_button.clicked.connect(self.save_settings)
+        layout.addWidget(save_button)
+
+    def load_existing_records(self):
+        for record in self.database.recent_plates():
+            label = f"{record.plate} {record.region}".strip()
+            self.events_list.addItem(QListWidgetItem(label))
+            self.recognized_plates.add(label)
+        self.refresh_lists_tab()
+
+    def refresh_lists_tab(self):
+        self.lists_list.clear()
+        for name, description in self.database.lists():
+            text = f"{name}: {description}" if description else name
+            self.lists_list.addItem(QListWidgetItem(text))
 
     def start_processing(self):
-        self.stop_processing()  # Останавливаем текущий поток, если он запущен
+        self.stop_processing()
         self.video_threads = []
-        for video_path in self.config['video_paths']:
-            video_thread = VideoThread(video_path)
+        for video_path in self.settings.app.video_paths:
+            video_thread = VideoThread(video_path, self.settings, self.database)
             video_thread.frame_signal.connect(self.update_frame)
             video_thread.text_signal.connect(self.update_text)
             video_thread.start()
             self.video_threads.append(video_thread)
 
     def stop_processing(self):
-        for video_thread in self.video_threads:
-            if video_thread and video_thread.isRunning():
-                video_thread.terminate()
-                video_thread.wait()  # Дожидаемся завершения потока
-
-    def update_frame(self, q_img):
-        pixmap = QPixmap.fromImage(q_img)
-        self.video_label.setPixmap(pixmap)
-
-    def init_settings_tab(self):
-        # Инициализация вкладки "Настройки"
-        layout = QVBoxLayout(self.settings_tab)
-
-        # Подвкладки для настроек
-        self.settings_tab_widget = QTabWidget(self)
-        layout.addWidget(self.settings_tab_widget)
-
-        # Подвкладка "Настройки обработки видео"
-        self.processing_settings_tab = QWidget()
-        self.init_processing_settings_tab()
-        self.settings_tab_widget.addTab(self.processing_settings_tab, "Настройки обработки видео")
-
-        # Подвкладка "Настройки каналов"
-        self.channels_settings_tab = QWidget()
-        self.init_channels_settings_tab()
-        self.settings_tab_widget.addTab(self.channels_settings_tab, "Настройки каналов")
-
-        # Кнопка "Сохранить настройки"
-        save_button = QPushButton('Сохранить настройки', self)
-        save_button.clicked.connect(self.save_settings)
-        layout.addWidget(save_button)
-
-    def init_processing_settings_tab(self):
-        # Инициализация подвкладки "Настройки обработки видео"
-        layout = QFormLayout(self.processing_settings_tab)
-
-        # Поле для редактирования plate_image_send_interval
-        self.interval_edit = QLineEdit(self)
-        self.interval_edit.setText(str(self.config['plate_image_send_interval']))
-        layout.addRow("Отправка изображения каждые (кадров):", self.interval_edit)
-
-    def init_channels_settings_tab(self):
-        # Инициализация подвкладки "Настройки каналов"
-        layout = QFormLayout(self.channels_settings_tab)
-
-        # Поле для ввода количества каналов
-        self.channel_count_edit = QLineEdit(self)
-        self.channel_count_edit.setText(str(len(self.config['video_paths'])))
-        layout.addRow("Количество каналов (не больше 10):", self.channel_count_edit)
-
-        # Поля для ввода путей к видео для каждого канала
-        self.video_path_edits = []
-        for i in range(10):
-            video_path_edit = QLineEdit(self)
-            video_path_edit.setReadOnly(True)
-            video_path_edit.mousePressEvent = lambda event, idx=i: self.select_video(event, idx)
-            self.video_path_edits.append(video_path_edit)
-            layout.addRow(f"Путь к видео для канала {i+1}:", video_path_edit)
-
-        # Заполняем поля текущими значениями
-        for i, path in enumerate(self.config['video_paths']):
-            self.video_path_edits[i].setText(path)
+        for thread in getattr(self, "video_threads", []):
+            if thread and thread.isRunning():
+                thread.terminate()
+                thread.wait()
 
     def select_video(self, event, index):
-        self.stop_processing()  # Останавливаем текущий поток обработки видео
+        self.stop_processing()
         options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "Video Files (*.mp4 *.avi);;All Files (*)", options=options)
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Video File",
+            "",
+            "Video Files (*.mp4 *.avi);;All Files (*)",
+            options=options,
+        )
         if file_name:
             self.video_path_edits[index].setText(file_name)
 
-    def save_settings(self):
-        # Сохраняем настройки
-        new_interval = self.interval_edit.text()
-        new_channel_count = self.channel_count_edit.text()
-        new_video_paths = [edit.text() for edit in self.video_path_edits]
+    def update_frame(self, image: QImage):
+        self.video_label.setPixmap(QPixmap.fromImage(image))
 
-        if new_interval.isdigit():
-            self.config['plate_image_send_interval'] = int(new_interval)
+    def update_text(self, text: str):
+        if text and text not in self.recognized_plates:
+            item = QListWidgetItem(text)
+            self.events_list.addItem(item)
+            self.recognized_plates.add(text)
+
+    def save_settings(self):
+        interval = self.interval_edit.text()
+        if interval.isdigit():
+            self.settings.processing.plate_image_send_interval = int(interval)
+
+        gpu_value = self.gpu_toggle.text().strip().lower()
+        if gpu_value in {"true", "false"}:
+            self.settings.ocr.gpu = gpu_value == "true"
+
+        new_channel_count = self.channel_count_edit.text()
         if new_channel_count.isdigit():
             channel_count = int(new_channel_count)
             if 0 < channel_count <= 10:
-                self.config['video_paths'] = new_video_paths[:channel_count]
-                self.start_processing()  # Перезапускаем обработку с новыми путями к видео
-        self.save_config()
+                new_paths = [edit.text() for edit in self.video_path_edits][:channel_count]
+                self.settings.app.video_paths = [p for p in new_paths if p]
+                self.start_processing()
 
-if __name__ == '__main__':
+        save_config(self.settings)
+
+    def closeEvent(self, event):
+        self.stop_processing()
+        self.database.close()
+        super().closeEvent(event)
+
+
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
