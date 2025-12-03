@@ -1,4 +1,4 @@
-"""OCR pipeline for number plate recognition with EasyOCR or CRNN."""
+"""OCR pipeline for number plate recognition with a CRNN model."""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import List, Optional, Protocol
 
 import cv2
-import easyocr
 import numpy as np
 import torch
 import torch.nn as nn
@@ -48,70 +47,6 @@ class _PatternValidator:
             if regex.match(cleaned_text):
                 return PlateCandidate(text=cleaned_text, confidence=1.0, region=pattern.get("region", ""))
         return None
-
-
-class EasyOCRPlateRecognizer(_PatternValidator):
-    """High level wrapper around EasyOCR with additional preprocessing."""
-
-    def __init__(self, settings: Settings):
-        super().__init__(settings.app.plate_patterns_path)
-        self.settings = settings
-        self.reader = easyocr.Reader(self.settings.ocr.languages, gpu=self.settings.ocr.gpu)
-
-    def preprocess_image(self, img) -> np.ndarray:
-        """Aggressive preprocessing to stabilise OCR results."""
-        resize_factor = max(self.settings.ocr.resize_factor, 1.0)
-        img = cv2.resize(img, None, fx=resize_factor, fy=resize_factor, interpolation=cv2.INTER_CUBIC)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        gray = clahe.apply(gray)
-
-        sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        gray = cv2.filter2D(gray, -1, sharpen_kernel)
-        gray = cv2.bilateralFilter(gray, self.settings.ocr.denoise_diameter, 75, 75)
-
-        thresh = cv2.adaptiveThreshold(
-            gray,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            max(self.settings.ocr.threshold_block_size, 3),
-            self.settings.ocr.threshold_c,
-        )
-        return thresh
-
-    def recognize(self, img) -> Optional[PlateCandidate]:
-        processed = self.preprocess_image(img)
-        results = self.reader.readtext(
-            processed,
-            detail=1,
-            allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-            width_ths=0.6,
-            ycenter_ths=0.5,
-            height_ths=0.2,
-        )
-
-        candidates: List[PlateCandidate] = []
-        for _, text, conf in results:
-            if conf < self.settings.ocr.min_confidence:
-                continue
-            cleaned = re.sub(r"[^A-Z0-9]", "", text.upper())
-            if not cleaned:
-                continue
-            candidates.append(PlateCandidate(text=cleaned, confidence=float(conf)))
-
-        candidates.sort(key=lambda c: c.confidence, reverse=True)
-        candidates = candidates[: self.settings.ocr.max_candidates]
-
-        for candidate in candidates:
-            matched = self.filter_by_pattern(candidate.text)
-            if matched:
-                matched.confidence = candidate.confidence
-                return matched
-
-        return candidates[0] if candidates else None
-
 
 class CRNN(nn.Module):
     """Standard CRNN architecture for scene text recognition."""
@@ -233,16 +168,11 @@ class CRNNPlateRecognizer(_PatternValidator):
 
 
 class PlateRecognizer:
-    """Facade that instantiates OCR backend specified in config."""
+    """Facade for the CRNN OCR backend."""
 
     def __init__(self, settings: Settings):
-        backend = settings.ocr.backend.lower()
-        if backend == "crnn":
-            logger.info("Using CRNN OCR backend")
-            self._impl: _Recognizer = CRNNPlateRecognizer(settings)
-        else:
-            logger.info("Using EasyOCR backend")
-            self._impl = EasyOCRPlateRecognizer(settings)
+        logger.info("Using CRNN OCR backend")
+        self._impl: _Recognizer = CRNNPlateRecognizer(settings)
 
     def recognize(self, img) -> Optional[PlateCandidate]:
         return self._impl.recognize(img)
