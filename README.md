@@ -66,7 +66,7 @@ database:
 - уменьшите `ocr.denoise_diameter`, если буквы «размываются»,
 - скорректируйте регулярные выражения в `configs/plate_patterns.yaml` под нужные регионы.
 
-## Используйте датасеты
+## Используйте датасеты для обучения моделей
 - для OCR
 - `https://www.kaggle.com/datasets/evgrafovmaxim/nomeroff-russian-license-plates?resource=download-directory`
 - для yolo
