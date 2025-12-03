@@ -3,14 +3,13 @@ from __future__ import annotations
 import yaml
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import List
 
 
 @dataclass
 class OCRConfig:
     """Configuration for OCR reader and preprocessing."""
 
-    backend: str = "easyocr"
-    languages: List[str] = field(default_factory=lambda: ["en", "ru"])
     gpu: bool = False
     min_confidence: float = 0.35
     crnn_weights: Path = Path("models/crnn.pth")
