@@ -1,0 +1,9 @@
+# Dataset definition for YOLO detector
+path: data/detection
+train: images/train
+val: images/val
+test: images/test
+
+# 6 vehicle classes + 1 plate class
+nc: 7
+names: [bus, car, motorcycle, threewheel, truck, van, plate]

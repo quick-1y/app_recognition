@@ -1,0 +1,14 @@
+# Configuration for YOLO vehicle and plate detection training
+model: yolov8n.pt
+# Path to a dataset YAML that describes train/val/test splits
+data_config: train/train_config/detection_dataset.yaml
+epochs: 50
+imgsz: 640
+batch: 16
+device: auto
+project: runs/train
+name: vehicle_plate_detection
+workers: 8
+resume: false
+multi_scale: true
+patience: 20
