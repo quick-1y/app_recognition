@@ -16,6 +16,17 @@
    python run.py
    ```
 
+### CLI-инференс YOLO + CRNN
+Для быстрой проверки без GUI добавлен скрипт `inference.py`, объединяющий детектор YOLO и OCR-модель CRNN.
+
+```bash
+python inference.py --image images/sample.jpg \
+  --detector-weights models/yolo11n.pt \
+  --ocr-weights models/ocr_crnn.pt
+```
+
+Аргумент `--video` позволяет прогонять видео и сохранять аннотированный ролик при указании `--save-video`. Настройки входного размера OCR (`--img-height/--img-width`) и словаря (`--vocab`) совпадают с параметрами обучения CRNN.
+
 ## Конфигурация
 Пример `config.yaml`:
 ```yaml
