@@ -167,12 +167,41 @@ class CRNNPlateRecognizer(_PatternValidator):
         return PlateCandidate(text=text, confidence=confidence)
 
 
-class PlateRecognizer:
-    """Facade for the CRNN OCR backend."""
+class EasyOCRPlateRecognizer(_PatternValidator):
+    """EasyOCR-based recognizer to mirror the earlier pipeline behavior."""
 
     def __init__(self, settings: Settings):
-        logger.info("Using CRNN OCR backend")
-        self._impl: _Recognizer = CRNNPlateRecognizer(settings)
+        super().__init__(settings.app.plate_patterns_path)
+        self.settings = settings
+        import easyocr
+
+        self.reader = easyocr.Reader(settings.ocr.languages, gpu=settings.ocr.gpu)
+
+    def recognize(self, img) -> Optional[PlateCandidate]:
+        results = self.reader.readtext(img)
+        for _, text, confidence in results:
+            if confidence < self.settings.ocr.min_confidence:
+                continue
+
+            matched = self.filter_by_pattern(text)
+            if matched:
+                matched.confidence = float(confidence)
+                return matched
+            return PlateCandidate(text=text, confidence=float(confidence))
+        return None
+
+
+class PlateRecognizer:
+    """Facade for selecting OCR backend (CRNN or EasyOCR)."""
+
+    def __init__(self, settings: Settings):
+        backend = settings.ocr.backend.lower()
+        if backend == "crnn":
+            logger.info("Using CRNN OCR backend")
+            self._impl: _Recognizer = CRNNPlateRecognizer(settings)
+        else:
+            logger.info("Using EasyOCR backend")
+            self._impl = EasyOCRPlateRecognizer(settings)
 
     def recognize(self, img) -> Optional[PlateCandidate]:
         return self._impl.recognize(img)

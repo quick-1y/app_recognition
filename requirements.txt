@@ -4,3 +4,4 @@ PyQt5
 PyYAML
 torch
 ultralytics
+easyocr
