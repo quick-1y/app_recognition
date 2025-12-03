@@ -9,6 +9,7 @@ from pathlib import Path
 class OCRConfig:
     """Configuration for OCR reader and preprocessing."""
 
+    backend: str = "easyocr"
     gpu: bool = False
     min_confidence: float = 0.35
     crnn_weights: Path = Path("models/crnn.pth")
