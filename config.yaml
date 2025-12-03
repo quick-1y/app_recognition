@@ -14,6 +14,7 @@ model:
   iou_threshold: 0.45
 
 ocr:
+  backend: easyocr
   languages: ["en"]
   gpu: false
   min_confidence: 0.35
@@ -24,6 +25,10 @@ ocr:
   threshold_block_size: 25
   threshold_c: 7
   max_candidates: 5
+  crnn_weights: models/crnn.pth
+  alphabet: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  crnn_img_height: 32
+  crnn_img_width: 128
 
 database:
   path: data/plates.db
