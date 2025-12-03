@@ -65,3 +65,9 @@ database:
 - увеличьте `ocr.resize_factor` или `contrast_alpha` для тёмных кадров,
 - уменьшите `ocr.denoise_diameter`, если буквы «размываются»,
 - скорректируйте регулярные выражения в `configs/plate_patterns.yaml` под нужные регионы.
+
+## Используйте датасеты
+- для OCR
+- `https://www.kaggle.com/datasets/evgrafovmaxim/nomeroff-russian-license-plates?resource=download-directory`
+- для yolo
+- `https://huggingface.co/datasets/AY000554/Car_plate_detecting_dataset`
