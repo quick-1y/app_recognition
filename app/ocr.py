@@ -1,4 +1,4 @@
-"""OCR pipeline for number plate recognition with a CRNN model."""
+"""CRNN-based OCR pipeline for licence plate recognition."""
 from __future__ import annotations
 
 import logging
@@ -20,33 +20,46 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PlateCandidate:
+    """Represents recognized plate text with optional region metadata."""
+
     text: str
     confidence: float
     region: str = ""
 
 
-class _Recognizer(Protocol):
-    def recognize(self, img) -> Optional[PlateCandidate]:
-        ...
+class PlateRecognizer(Protocol):
+    def recognize(self, img: np.ndarray) -> Optional[PlateCandidate]:
+        """Recognize plate text from an image snippet."""
 
 
 def _load_patterns(path: Path) -> List[dict]:
+    if not path.exists():
+        logger.warning("Pattern file %s not found. Proceeding without region patterns.", path)
+        return []
+
     with open(path, "r", encoding="utf-8") as file:
         config = yaml.safe_load(file) or {}
         return config.get("plate_patterns", [])
 
 
-class _PatternValidator:
+class PatternValidator:
+    """Validates recognized text against configured plate patterns."""
+
     def __init__(self, patterns_path: Path):
         self.patterns = _load_patterns(patterns_path)
 
-    def filter_by_pattern(self, text: str) -> Optional[PlateCandidate]:
+    def match(self, text: str) -> Optional[PlateCandidate]:
         cleaned_text = re.sub(r"[^A-Z0-9]", "", text.upper())
         for pattern in self.patterns:
             regex = re.compile(pattern.get("pattern", ""))
             if regex.match(cleaned_text):
-                return PlateCandidate(text=cleaned_text, confidence=1.0, region=pattern.get("region", ""))
+                return PlateCandidate(
+                    text=cleaned_text,
+                    confidence=1.0,
+                    region=pattern.get("region", ""),
+                )
         return None
+
 
 class CRNN(nn.Module):
     """Standard CRNN architecture for scene text recognition."""
@@ -100,27 +113,14 @@ class CRNN(nn.Module):
         return output  # (T, B, num_classes)
 
 
-class CRNNPlateRecognizer(_PatternValidator):
-    """CRNN-based OCR recognizer that mirrors the reference project."""
+class CRNNPreprocessor:
+    """Handles preprocessing steps before sending image to the CRNN."""
 
-    def __init__(self, settings: Settings):
-        super().__init__(settings.app.plate_patterns_path)
+    def __init__(self, settings: Settings, device: torch.device):
         self.settings = settings
-        self.alphabet = settings.ocr.alphabet
-        num_classes = len(self.alphabet) + 1  # CTC blank
-        self.device = torch.device("cuda" if settings.ocr.gpu and torch.cuda.is_available() else "cpu")
+        self.device = device
 
-        self.model = CRNN(settings.ocr.crnn_img_height, num_classes).to(self.device)
-        if not settings.ocr.crnn_weights.exists():
-            raise FileNotFoundError(
-                f"CRNN weights not found at {settings.ocr.crnn_weights}. Provide trained weights to enable CRNN OCR."
-            )
-
-        state_dict = torch.load(settings.ocr.crnn_weights, map_location=self.device)
-        self.model.load_state_dict(state_dict, strict=False)
-        self.model.eval()
-
-    def _preprocess(self, img) -> torch.Tensor:
+    def preprocess(self, img: np.ndarray) -> torch.Tensor:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         resized = cv2.resize(
             gray,
@@ -131,16 +131,22 @@ class CRNNPlateRecognizer(_PatternValidator):
         tensor = torch.from_numpy(normalized).unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
         return tensor.to(self.device)
 
-    def _decode(self, logits: torch.Tensor) -> tuple[str, float]:
-        # logits: (T, 1, C)
+
+class CRNNDecoder:
+    """Decodes raw network logits into human-readable text and confidence."""
+
+    def __init__(self, alphabet: str):
+        self.alphabet = alphabet
+        self.blank_idx = len(alphabet)
+
+    def decode(self, logits: torch.Tensor) -> tuple[str, float]:
         probs = torch.softmax(logits, dim=2)
         best_path = probs.argmax(2).squeeze(1)
 
-        blank_idx = len(self.alphabet)
         collapsed: List[int] = []
         last_char = None
         for idx in best_path.tolist():
-            if idx == blank_idx:
+            if idx == self.blank_idx:
                 last_char = None
                 continue
             if idx != last_char:
@@ -151,58 +157,67 @@ class CRNNPlateRecognizer(_PatternValidator):
         confidence = float(probs.max(2)[0].mean().item()) if text else 0.0
         return text, confidence
 
-    def recognize(self, img) -> Optional[PlateCandidate]:
-        with torch.no_grad():
-            tensor = self._preprocess(img)
-            logits = self.model(tensor)  # (T, B, C)
 
-        text, confidence = self._decode(logits)
+class CRNNPredictor:
+    """Encapsulates model loading and inference to keep PlateRecognizer lean."""
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.device = torch.device("cuda" if settings.ocr.gpu and torch.cuda.is_available() else "cpu")
+        self.decoder = CRNNDecoder(settings.ocr.alphabet)
+        self.preprocessor = CRNNPreprocessor(settings, self.device)
+
+        num_classes = len(settings.ocr.alphabet) + 1  # CTC blank
+        self.model = CRNN(settings.ocr.crnn_img_height, num_classes).to(self.device)
+        if not settings.ocr.crnn_weights.exists():
+            raise FileNotFoundError(
+                f"CRNN weights not found at {settings.ocr.crnn_weights}. Provide trained weights to enable OCR."
+            )
+
+        state_dict = torch.load(settings.ocr.crnn_weights, map_location=self.device)
+        self.model.load_state_dict(state_dict, strict=False)
+        self.model.eval()
+
+    def predict(self, img: np.ndarray) -> tuple[str, float]:
+        with torch.no_grad():
+            tensor = self.preprocessor.preprocess(img)
+            logits = self.model(tensor)
+        return self.decoder.decode(logits)
+
+
+class CRNNPlateRecognizer:
+    """High-level OCR service that combines validation and CRNN prediction."""
+
+    def __init__(self, settings: Settings, validator: PatternValidator | None = None):
+        self.settings = settings
+        self.validator = validator or PatternValidator(settings.app.plate_patterns_path)
+        self.predictor = CRNNPredictor(settings)
+
+    def recognize(self, img: np.ndarray) -> Optional[PlateCandidate]:
+        text, confidence = self.predictor.predict(img)
         if not text or confidence < self.settings.ocr.min_confidence:
             return None
 
-        matched = self.filter_by_pattern(text)
+        matched = self.validator.match(text)
         if matched:
             matched.confidence = confidence
             return matched
+
         return PlateCandidate(text=text, confidence=confidence)
 
 
-class EasyOCRPlateRecognizer(_PatternValidator):
-    """EasyOCR-based recognizer to mirror the earlier pipeline behavior."""
+class PlateRecognitionService:
+    """Facade for OCR to simplify usage in pipelines and GUIs."""
 
     def __init__(self, settings: Settings):
-        super().__init__(settings.app.plate_patterns_path)
-        self.settings = settings
-        import easyocr
+        self._recognizer: PlateRecognizer = CRNNPlateRecognizer(settings)
 
-        self.reader = easyocr.Reader(settings.ocr.languages, gpu=settings.ocr.gpu)
-
-    def recognize(self, img) -> Optional[PlateCandidate]:
-        results = self.reader.readtext(img)
-        for _, text, confidence in results:
-            if confidence < self.settings.ocr.min_confidence:
-                continue
-
-            matched = self.filter_by_pattern(text)
-            if matched:
-                matched.confidence = float(confidence)
-                return matched
-            return PlateCandidate(text=text, confidence=float(confidence))
-        return None
+    def recognize(self, img: np.ndarray) -> Optional[PlateCandidate]:
+        return self._recognizer.recognize(img)
 
 
-class PlateRecognizer:
-    """Facade for selecting OCR backend (CRNN or EasyOCR)."""
-
-    def __init__(self, settings: Settings):
-        backend = settings.ocr.backend.lower()
-        if backend == "crnn":
-            logger.info("Using CRNN OCR backend")
-            self._impl: _Recognizer = CRNNPlateRecognizer(settings)
-        else:
-            logger.info("Using EasyOCR backend")
-            self._impl = EasyOCRPlateRecognizer(settings)
-
-    def recognize(self, img) -> Optional[PlateCandidate]:
-        return self._impl.recognize(img)
-
+__all__ = [
+    "PlateCandidate",
+    "PlateRecognizer",
+    "PlateRecognitionService",
+]
