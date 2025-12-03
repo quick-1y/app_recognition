@@ -1,11 +1,9 @@
-# plates_config.yaml
+# Legacy dataset config kept for backward compatibility with earlier scripts
+# It mirrors `detection_dataset.yaml`.
+path: data/detection
+train: images/train
+val: images/val
+test: images/test
 
-# Путь к датасету
-path: D:\dataset
-train: train/images
-val: valid/images
-test: test/images
-
-# Классы
-nc: 7  # Общее количество классов (6 транспортных средств + 1 номерной знак)
+nc: 7
 names: ['bus', 'car', 'motorcycle', 'threewheel', 'truck', 'van', 'plate']

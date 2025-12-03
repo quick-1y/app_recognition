@@ -1,31 +1,27 @@
-from ultralytics import YOLO
-import os
+"""Legacy entry point that now delegates to the new YOLO trainer."""
+from pathlib import Path
+import argparse
 
-if __name__ == '__main__':
-    # Проверка текущей директории
-    print(f"Current working directory: {os.getcwd()}")
+from train.yolo_trainer import YOLOTrainer, YOLOTrainingConfig
 
-    # Установка рабочей директории, если необходимо
-    os.chdir('/')
 
-    # Путь к предобученной модели для детекции типа транспортного средства
-    pretrained_model_path = 'yolo11n.pt'
-
-    # Загрузка предобученной модели с указанием количества классов
-    model = YOLO(pretrained_model_path)
-
-    # Определение относительного пути к конфигурационному файлу
-    config_path = 'configs/train_model_config.yaml'
-
-    # Дообучение модели на объединенных данных
-    results = model.train(
-        data=config_path,
-        epochs=5,
-        imgsz=640,
-        batch=16,
-        name='vehicles_type_and_plates',
-        multi_scale=True  # Включение многомасштабного обучения
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train YOLO model for ANPR")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("train/train_config/yolo_train_config.yaml"),
+        help="Path to the training configuration YAML.",
     )
+    return parser.parse_args()
 
-    # Вывод результатов
-    print(results)
+
+def main() -> None:
+    args = parse_args()
+    config = YOLOTrainingConfig.from_yaml(args.config)
+    trainer = YOLOTrainer(config)
+    trainer.train()
+
+
+if __name__ == "__main__":
+    main()

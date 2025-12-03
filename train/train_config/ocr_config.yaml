@@ -1,0 +1,17 @@
+# Configuration for OCR model training
+# The dataset directory should contain the images referenced by labels_file.
+dataset_root: data/ocr
+labels_file: data/ocr/labels.csv
+vocab: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+img_height: 64
+img_width: 160
+max_label_length: 16
+batch_size: 32
+num_workers: 4
+epochs: 30
+learning_rate: 0.0005
+device: cuda
+checkpoint_dir: runs/ocr
+checkpoint_interval: 5
+log_interval: 20
+resume_from: ""
